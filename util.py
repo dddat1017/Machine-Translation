@@ -61,19 +61,20 @@ class EnVietDataset(Dataset):
 
         # Load cached vocab if existent
         if os.path.exists(vocab_file_path):
-            with open(vocab_file_path, "rb") as f:
+            with open(vocab_file_path, 'rb') as f:
                 return pickle.load(f)
 
         word_counts = Counter()
 
-        # Count unique words (lower case)
+        # Count unique words
         for sentence in sentences:
-            for token in sentence:
+            sen = sentence[1 : len(sentence) - 1]    # don't count '<SOS>' and '<EOS>'
+            for token in sen:
                 word_counts[token] += 1
 
-        # Special tokens: padding, beginning of sentence, end of sentence, and unknown word
-        vocab = {'[pad]': 0, '[unk]': 1}
-        token_id = 2
+        # Special tokens: beginning of sentence and end of sentence
+        vocab = {'[unk]': 0, '<SOS>': 1, '<EOS>': 2}
+        token_id = 3
 
         # Assign a unique id to each word that occurs at least unk_cutoff number of times
         for token, count in word_counts.items():
@@ -88,15 +89,13 @@ class EnVietDataset(Dataset):
         return vocab
 
     @staticmethod
-    def _normalize(sentences):
-        return [s.lower().translate(str.maketrans('', '', string.punctuation)) for s in sentences]
+    def _normalize(sentence):
+        result = [s.lower().translate(str.maketrans('', '', string.punctuation)) for s in sentence]
+        result.insert(0, '<SOS>')
+        result.append('<EOS>')
+        return result
 
     def tokens_to_indices(self, tokens, lang='en'):
-        """
-        Converts tokens to indices.
-        :param tokens: A list of tokens (strings)
-        :return: A tensor of shape (n, 1) containing the token indices
-        """
         assert lang == 'en' or lang == 'viet'
 
         indices = []
@@ -124,8 +123,6 @@ class EnVietDataset(Dataset):
             if torch.is_tensor(index):
                 index = index.item()
             token = reverse_vocab.get(index, '[unk]')
-            if token == '[pad]':
-                continue
             tokens.append(token)
 
         return " ".join(tokens)
