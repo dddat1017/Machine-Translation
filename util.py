@@ -55,6 +55,17 @@ class EnVietDataset(Dataset):
 
     @staticmethod
     def _build_vocab(sentences, unk_cutoff=1, lang='en'):
+        """Builds a vocab (dictionary) of word->index.
+
+        Args:
+            sentences (list of list of str's): All the sentences with their tokens separated.
+            unk_cutoff (int, optional): Number of occurrences to consider a word significant. Defaults to 1.
+            lang (str, optional): Language the vocab is in. Defaults to 'en' for English. Other option is 'viet'
+            for Vietnamese.
+
+        Returns:
+            dict of word->index: The vocab of word->index.
+        """
         assert lang == 'en' or lang == 'viet'
 
         vocab_file_path = 'en_vocab.pkl' if lang == 'en' else 'viet_vocab.pkl'
@@ -90,12 +101,30 @@ class EnVietDataset(Dataset):
 
     @staticmethod
     def _normalize(sentence):
+        """Normalizes a list of words (i.e., to lowercase, no punctuations, etc.).
+
+        Args:
+            sentence (list of str's): The sentence with the tokens separated.
+
+        Returns:
+            list of str's: The resulting sentence with each separated token normalized.
+        """
         result = [s.lower().translate(str.maketrans('', '', string.punctuation)) for s in sentence]
         result.insert(0, '<SOS>')
         result.append('<EOS>')
         return result
 
     def tokens_to_indices(self, tokens, lang='en'):
+        """Converts a list of tokens from strings to their corresponding indices in the specified vocab.
+
+        Args:
+            tokens (list of str's): Tokens to be converted.
+            lang (str, optional): Specifies which vocab to use. Defaults to 'en' for English. Other option
+            is 'viet' for Vietnamese.
+
+        Returns:
+            length-N tensor: Tensor containing the indices corresponding to each token.
+        """
         assert lang == 'en' or lang == 'viet'
 
         indices = []
@@ -109,10 +138,16 @@ class EnVietDataset(Dataset):
         return torch.tensor(indices)
 
     def indices_to_tokens(self, indices, lang='en'):
-        """
-        Converts indices to tokens and concatenates them as a string.
-        :param indices: A tensor of indices of shape (n, 1), a list of (1, 1) tensors or a list of indices (ints)
-        :return: The string containing tokens, concatenated by a space.
+        """Converts indices to tokens and concatenates them as a string.
+
+        Args:
+            indices (list of str's): A tensor of indices (with shape (N, 1) or length-N), a list of (1, 1) tensors,
+            or a list of indices (ints).
+            lang (str, optional): Specifies which vocab to use. Defaults to 'en' for English. Other option
+            is 'viet' for Vietnamese.
+
+        Returns:
+            str: String from concatenating the tokens.
         """
         assert lang == 'en' or lang == 'viet'
 
@@ -128,6 +163,20 @@ class EnVietDataset(Dataset):
         return " ".join(tokens)
 
 def collate_fn(batch):
+    """Create a batch of data given a list of N input sequences and output sequences. Returns a tuple
+    containing two tensors each with shape (N, max_sequence_length), where max_sequence_length is the
+    maximum length of any sequence in the batch.
+
+    Note: In the case of this repository, we expect N = 1 since we only want to consider batches of size 1.
+    This is because the model processes one input sequence, output sequence pair at a time. However, the
+    implementation of this function will scale for any N.
+
+    Args:
+        batch (list): A list of size N, where each element is a tuple containing two sequence tensors.
+
+    Returns:
+        tuple of two tensors: A tuple containing two tensors each with shape (N, max_sequence_length).
+    """
     en_inputs, viet_translations = zip(*batch)
     max_en_input_length = 0
     max_viet_translation_length = 0

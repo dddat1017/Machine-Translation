@@ -20,9 +20,9 @@ def train(input_seq, target_seq, encoder, decoder, encoder_optim, decoder_optim,
         loss += loss_fn(output, torch.tensor([token.item()]).to(device))
         decoder_h0 = hn
         decoder_c0 = cn
-        topv, topi = output.topk(1)
-        decoder_input = topi.squeeze().detach()    # detach from history as input
-        if decoder_input.item() == 2: break    # predicted '<EOS>'
+        top_pred_val, top_pred_idx = output.topk(1)    # largest output and its corresponding index
+        decoder_input = torch.tensor(top_pred_idx.item())
+        if decoder_input.item() == 2: break    # predicted '<EOS>', so stop
 
     encoder_optim.zero_grad()
     decoder_optim.zero_grad()
@@ -30,7 +30,7 @@ def train(input_seq, target_seq, encoder, decoder, encoder_optim, decoder_optim,
     encoder_optim.step()
     decoder_optim.step()
 
-    return loss.item() / len(target_seq[0])
+    return loss.item() / target_tokens.shape[0]
 
 def evaluate(input_seq, encoder, decoder, device):
     decoder_h0, decoder_c0 = encoder(input_seq)
@@ -38,14 +38,17 @@ def evaluate(input_seq, encoder, decoder, device):
 
     predicted_indices = []
 
-    for i in range(50):
+    # Model could potentially keep generating words on forever; so hacky stopping condition for now
+    stopping_cond = 500
+
+    for i in range(stopping_cond):
         output, hn, cn = decoder(torch.tensor([[decoder_input.item()]]).to(device), decoder_h0, decoder_c0)
         decoder_h0 = hn
         decoder_c0 = cn
-        topv, topi = output.topk(1)
-        decoder_input = topi.squeeze().detach()    # detach from history as input
+        top_pred_val, top_pred_idx = output.topk(1)    # largest output and its corresponding index
+        decoder_input = torch.tensor(top_pred_idx.item())
         predicted_indices.append(decoder_input.item())
-        if decoder_input.item() == 2: break    # predicted '<EOS>'
+        if decoder_input.item() == 2: break    # predicted '<EOS>', so stop
 
     return torch.tensor(predicted_indices)
 
@@ -54,7 +57,7 @@ if __name__ == "__main__":
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
 
-    path = './vie.txt'
+    path = './data/vie.txt'
     train_dataset = EnVietDataset(path)
     train_loader = DataLoader(train_dataset, batch_size=1, collate_fn=collate_fn, shuffle=True)
 
@@ -70,10 +73,11 @@ if __name__ == "__main__":
 
     learning_rate = 0.005
     momentum = 0.9
-    embedding_dim = 128
+    embedding_dim = 256
+    hidden_size = 512
 
-    encoder = EncoderRNN(len(train_dataset.en_vocab), embedding_dim)
-    decoder = DecoderRNN(len(train_dataset.viet_vocab), embedding_dim)
+    encoder = EncoderRNN(len(train_dataset.en_vocab), embedding_dim, hidden_size)
+    decoder = DecoderRNN(len(train_dataset.viet_vocab), embedding_dim, hidden_size)
 
     encoder.to(device)
     decoder.to(device)
