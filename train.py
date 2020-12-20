@@ -56,6 +56,7 @@ if __name__ == "__main__":
     # Check GPU availability
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
+    print()
 
     path = './data/vie.txt'
     train_dataset = EnVietDataset(path)
