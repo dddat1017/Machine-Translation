@@ -104,8 +104,8 @@ if __name__ == "__main__":
             loss = train(en, viet, encoder, decoder, encoder_optim, decoder_optim, loss_fn, device)
             running_loss += loss
 
-            if i % 5000 == 4999:
-                avg_loss = running_loss / 5000
+            if i % 2000 == 1999:
+                avg_loss = running_loss / 2000
                 running_loss = 0.0
                 training_losses.append(avg_loss)
                 print(f'[Epoch {epoch + 1}, Batch {i + 1}]: {avg_loss}')
