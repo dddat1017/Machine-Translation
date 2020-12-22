@@ -7,33 +7,35 @@ import string
 from collections import Counter
 
 class EnVietDataset(Dataset):
-    def __init__(self, path, en_vocab=None, en_reverse_vocab=None, viet_vocab=None, viet_reverse_vocab=None):
+    def __init__(self, en_path, viet_path, en_vocab_path, viet_vocab_path):
         super().__init__()
 
         en_inputs = []
         viet_translations = []
 
-        with open(path, 'r', encoding='utf-8') as f:
-            for line in f.readlines():
-                en, viet, _ = line.strip().split('\t')
-                en_inputs.append(self._normalize(en.split(' ')))
-                viet_translations.append(self._normalize(viet.split(' ')))
+        with open(en_path, 'r', encoding='utf-8') as en_f:
+            for en_line in en_f.readlines():
+                en_sequence = en_line.strip()
+                en_tokens = en_sequence.split(' ')
+                en_tokens.insert(0, '<s>')
+                en_tokens.append('</s>')
+                en_inputs.append(en_tokens)
 
-        # Vocab maps english tokens to indices
-        if en_vocab is None:
-            en_vocab = self._build_vocab(en_inputs, lang='en')
-            en_reverse_vocab = None
-        # Reverse vocab maps indices to english tokens
-        if en_reverse_vocab is None:
-            en_reverse_vocab = {index: token for token, index in en_vocab.items()}
+        with open(viet_path, 'r', encoding='utf-8') as viet_f:
+            for viet_line in viet_f.readlines():
+                viet_sequence = viet_line.strip()
+                viet_tokens = viet_sequence.split(' ')
+                viet_tokens.insert(0, '<s>')
+                viet_tokens.append('</s>')
+                viet_translations.append(viet_tokens)
 
-        # Vocab maps vietnamese tokens to indices
-        if viet_vocab is None:
-            viet_vocab = self._build_vocab(viet_translations, lang='viet')
-            viet_reverse_vocab = None
-        # Reverse vocab maps indices to vietnamese tokens
-        if viet_reverse_vocab is None:
-            viet_reverse_vocab = {index: token for token, index in viet_vocab.items()}
+        # Vocab maps english tokens to indices then reverse vocab maps indices to english tokens
+        en_vocab = self._build_vocab(en_vocab_path)
+        en_reverse_vocab = {index: token for token, index in en_vocab.items()}
+
+        # Vocab maps vietnamese tokens to indices then reverse vocab maps indices to vietnamese tokens
+        viet_vocab = self._build_vocab(viet_vocab_path)
+        viet_reverse_vocab = {index: token for token, index in viet_vocab.items()}
 
         self.en_vocab = en_vocab
         self.en_reverse_vocab = en_reverse_vocab
@@ -54,65 +56,27 @@ class EnVietDataset(Dataset):
         return len(self.en_inputs)
 
     @staticmethod
-    def _build_vocab(sentences, unk_cutoff=1, lang='en'):
+    def _build_vocab(vocab_path):
         """Builds a vocab (dictionary) of word->index.
 
         Args:
-            sentences (list of list of str's): All the sentences with their tokens separated.
-            unk_cutoff (int, optional): Number of occurrences to consider a word significant. Defaults to 1.
-            lang (str, optional): Language the vocab is in. Defaults to 'en' for English. Other option is 'viet'
-            for Vietnamese.
+            vocab_path (str): Path to the vocab.
 
         Returns:
             dict of word->index: The vocab of word->index.
         """
-        assert lang == 'en' or lang == 'viet'
+        assert os.path.exists(vocab_path)
 
-        vocab_file_path = 'en_vocab.pkl' if lang == 'en' else 'viet_vocab.pkl'
+        vocab = {}
+        token_id = 0
 
-        # Load cached vocab if existent
-        if os.path.exists(vocab_file_path):
-            with open(vocab_file_path, 'rb') as f:
-                return pickle.load(f)
-
-        word_counts = Counter()
-
-        # Count unique words
-        for sentence in sentences:
-            sen = sentence[1 : len(sentence) - 1]    # don't count '<SOS>' and '<EOS>'
-            for token in sen:
-                word_counts[token] += 1
-
-        # Special tokens: beginning of sentence and end of sentence
-        vocab = {'[unk]': 0, '<SOS>': 1, '<EOS>': 2}
-        token_id = 3
-
-        # Assign a unique id to each word that occurs at least unk_cutoff number of times
-        for token, count in word_counts.items():
-            if count >= unk_cutoff:
+        with open(vocab_path, 'r', encoding='utf-8') as f:
+            for line in f.readlines():
+                token = line.strip()
                 vocab[token] = token_id
                 token_id += 1
 
-        # Cache vocab
-        with open(vocab_file_path, 'wb') as f:
-            pickle.dump(vocab, f, pickle.HIGHEST_PROTOCOL)
-
         return vocab
-
-    @staticmethod
-    def _normalize(sentence):
-        """Normalizes a list of words (i.e., to lowercase, no punctuations, etc.).
-
-        Args:
-            sentence (list of str's): The sentence with the tokens separated.
-
-        Returns:
-            list of str's: The resulting sentence with each separated token normalized.
-        """
-        result = [s.lower().translate(str.maketrans('', '', string.punctuation)) for s in sentence]
-        result.insert(0, '<SOS>')
-        result.append('<EOS>')
-        return result
 
     def tokens_to_indices(self, tokens, lang='en'):
         """Converts a list of tokens from strings to their corresponding indices in the specified vocab.
@@ -130,7 +94,7 @@ class EnVietDataset(Dataset):
         indices = []
         vocab = self.en_vocab if lang == 'en' else self.viet_vocab
 
-        unk_token = vocab['[unk]']
+        unk_token = vocab['<unk>']
 
         for token in tokens:
             indices.append(vocab.get(token, unk_token))
@@ -157,7 +121,7 @@ class EnVietDataset(Dataset):
         for index in indices:
             if torch.is_tensor(index):
                 index = index.item()
-            token = reverse_vocab.get(index, '[unk]')
+            token = reverse_vocab.get(index, '<unk>')
             tokens.append(token)
 
         return " ".join(tokens)
