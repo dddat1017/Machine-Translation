@@ -1,10 +1,6 @@
 import torch
 from torch.utils.data import Dataset
-
 import os
-import pickle
-import string
-from collections import Counter
 
 class EnVietDataset(Dataset):
     def __init__(self, en_path, viet_path, en_vocab_path, viet_vocab_path):

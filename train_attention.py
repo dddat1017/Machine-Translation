@@ -58,8 +58,11 @@ if __name__ == "__main__":
     print(device)
     print()
 
-    path = './data/vie.txt'
-    train_dataset = EnVietDataset(path)
+    en_path = './data/train.en.txt'
+    viet_path = './data/train.vi.txt'
+    en_vocab_path = './data/vocab.en.txt'
+    viet_vocab_path = './data/vocab.vi.txt'
+    train_dataset = EnVietDataset(en_path, viet_path, en_vocab_path, viet_vocab_path)
     train_loader = DataLoader(train_dataset, batch_size=1, collate_fn=collate_fn, shuffle=True)
 
     # Print out some random examples from the data
@@ -91,7 +94,7 @@ if __name__ == "__main__":
     training_losses = []
     running_loss = 0.0
 
-    num_epochs = 12
+    num_epochs = 1
 
     for epoch in range(num_epochs):
         encoder.train()
@@ -101,8 +104,8 @@ if __name__ == "__main__":
             loss = train(en, viet, encoder, decoder, encoder_optim, decoder_optim, loss_fn, device)
             running_loss += loss
 
-            if i % 1000 == 999:
-                avg_loss = running_loss / 1000
+            if i % 5000 == 4999:
+                avg_loss = running_loss / 5000
                 running_loss = 0.0
                 training_losses.append(avg_loss)
                 print(f'[Epoch {epoch + 1}, Batch {i + 1}]: {avg_loss}')
