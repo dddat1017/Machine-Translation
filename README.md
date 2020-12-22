@@ -1,9 +1,7 @@
 # Machine-Translation
 
-#### Solving the task of machine translation (from English to Vietnamese) with a regular Seq2Seq network and a global attention, dot product Seq2Seq network. Both following the Encoder-Decoder architecture.
+#### Solving the task of machine translation (from English to Vietnamese) with a regular Seq2Seq network and a global attention-based, dot product Seq2Seq network. Both following the Encoder-Decoder architecture.
 #### Preprocessed data courtesy of the [Stanford NLP group](https://nlp.stanford.edu/projects/nmt/).
-
-&nbsp;
 
 ### Standard Seq2Seq (Encoder-Decoder architecture) network
 ---
