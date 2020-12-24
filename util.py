@@ -63,8 +63,8 @@ class EnVietDataset(Dataset):
         """
         assert os.path.exists(vocab_path)
 
-        vocab = {}
-        token_id = 0
+        vocab = {'<pad>': 0}
+        token_id = 1
 
         with open(vocab_path, 'r', encoding='utf-8') as f:
             for line in f.readlines():
@@ -118,6 +118,8 @@ class EnVietDataset(Dataset):
             if torch.is_tensor(index):
                 index = index.item()
             token = reverse_vocab.get(index, '<unk>')
+            if token == '<pad>':
+                continue
             tokens.append(token)
 
         return " ".join(tokens)
@@ -127,15 +129,13 @@ def collate_fn(batch):
     containing two tensors each with shape (N, max_sequence_length), where max_sequence_length is the
     maximum length of any sequence in the batch.
 
-    Note: In the case of this repository, we expect N = 1 since we only want to consider batches of size 1.
-    This is because the model processes one input sequence, output sequence pair at a time. However, the
-    implementation of this function will scale for any N.
-
     Args:
         batch (list): A list of size N, where each element is a tuple containing two sequence tensors.
 
     Returns:
-        tuple of two tensors: A tuple containing two tensors each with shape (N, max_sequence_length).
+        tuple of two tensors, list of ints, list of ints: A tuple containing two tensors each with
+    shape (N, max_sequence_length), list of each input sequence's length, and list of each target
+    sequence's length.
     """
     en_inputs, viet_translations = zip(*batch)
     max_en_input_length = 0
@@ -143,9 +143,12 @@ def collate_fn(batch):
 
     e = []
     v = []
+    e_lens = []
+    v_lens = []
 
     for en_input in en_inputs:
         en_input_length = list(en_input.size())[0]
+        e_lens.append(en_input_length)
         if en_input_length > max_en_input_length:
             max_en_input_length = en_input_length
     for en_input in en_inputs:
@@ -157,6 +160,7 @@ def collate_fn(batch):
 
     for viet_translation in viet_translations:
         viet_translation_length = list(viet_translation.size())[0]
+        v_lens.append(viet_translation_length)
         if viet_translation_length > max_viet_translation_length:
             max_viet_translation_length = viet_translation_length
     for viet_translation in viet_translations:
@@ -166,4 +170,4 @@ def collate_fn(batch):
         else:
             v.append(viet_translation)
 
-    return (torch.stack(e), torch.stack(v))
+    return (torch.stack(e), torch.stack(v)), e_lens, v_lens

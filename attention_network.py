@@ -9,26 +9,31 @@ class AttnEncoderRNN(nn.Module):
         self.embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=embedding_dim, padding_idx=0)
         self.rnn = nn.LSTM(input_size=embedding_dim, hidden_size=hidden_size, num_layers=1, batch_first=True)
 
-    def forward(self, input_tensor):
-        """Forward pass through the encoder. The encoder processes one input sequence at a time.
-
-        Note: In the case of this repository, we expect a batch of size 1 containing a length-seq_len tensor
-        of the input sequence (e.g., the sequence to be translated).
+    def forward(self, batch_sequences, seq_lens):
+        """Forward pass through the encoder.
 
         Args:
-            input_tensor (1-by-seq_len tensor): Batch of size 1 containing a length-seq_len tensor
-        of the input sequence (e.g., the sequence to be translated).
+            batch_sequences (N-by-seq_len tensor): Batch containing N length-seq_len tensors
+        (e.g., the sequences to be translated). N is the batch size.
+            seq_lens (list of ints): List of sequences lengths of each batch element.
 
         Returns:
-            tuple of one (1, seq_len, hidden_size) tensor and two (1, N, hidden_size) tensors: All the encoder's hidden
-            states and (hn, cn) from the RNN (LSTM) layer.
+            tuple of one (N, seq_len, hidden_size) tensor and two (1, N, hidden_size) tensors: All hidden states of each
+            sequence in the batch and (hn, cn) from the RNN (LSTM) layer.
         """
-        N = list(input_tensor.size())[0]    # should be expecting batch size of 1 (1 sequence at a time)
+        batch_sequences = self.embedding(batch_sequences)    # N-by-seq_len-by-embedding_dim
 
-        input_tensor = self.embedding(input_tensor)   # N-by-seq_len-by-embedding_dim
-        out, (hn, cn) = self.rnn(input_tensor)    # out is N-by-seq_len-by-hidden_size, hn and cn are both 1-by-N-by-hidden_size
+        packed_batch_sequences = nn.utils.rnn.pack_padded_sequence(batch_sequences, lengths=seq_lens, batch_first=True, enforce_sorted=False)
 
-        return out, hn, cn
+        out, (hn, cn) = self.rnn(packed_batch_sequences)    # hn and cn are both 1-by-N-by-hidden_size
+
+        # Unpack output from RNN (LSTM) layer. out_padded is N-by-seq_len-by-hidden_size
+        out_padded, _ = torch.nn.utils.rnn.pad_packed_sequence(out, batch_first=True)
+
+        # out_padded: all hidden states of each sequence in the batch
+        # hn: the final hidden state of each sequence in the batch
+        # cn: final cell state of each sequence in the batch
+        return out_padded, hn, cn
 
 class AttnDecoderRNN(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_size):
@@ -38,47 +43,66 @@ class AttnDecoderRNN(nn.Module):
         self.embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=embedding_dim, padding_idx=0)
         self.rnn = nn.LSTM(input_size=embedding_dim, hidden_size=hidden_size, num_layers=1, batch_first=True)
         self.fc = nn.Linear(hidden_size * 2, vocab_size)
-        self.softmax = nn.LogSoftmax(dim=1)
+        self.softmax = nn.LogSoftmax(dim=0)
 
-    def forward(self, target_token, h0, c0, encoder_hidden_states, device):
-        """Forward pass through the decoder. The decoder processes one target token at a time.
-
-        Note: In the case of this repository, we expect a batch of size 1 containing the length-1 tensor of
-        the target token in the target sequence (e.g., the translation).
+    def forward_step(self, prev_output, prev_hn, prev_cn, encoder_hidden_states, device):
+        """Performs a single step in the Decoder (i.e., compute the predictions, hn, and cn given a previous output, hn, and cn).
 
         Args:
-            target_token (1-by-1 tensor): Batch of size 1 containing the length-1 tensor of
-        the target token in the target sequence (e.g., the translation).
-            h0 (1-by-1-by-hidden_size tensor): Tensor containing the initial hidden state for each token in the batch.
-            c0 (1-by-1-by-hidden_size tensor): Tensor containing the initial cell state for each token in the batch.
-            encoder_hidden_states (1-by-seq_len-by-hidden_size): Tensor containing all the hidden states from the
+            prev_output (1-by-1 tensor): The ouput from the previous time step.
+            prev_hn (1-by-1-by-hidden_size tensor): The hidden state from the previous time step.
+            prev_cn (1-by-1-by-hidden_size tensor): The cell state from the previous time step.
+            encoder_hidden_states (seq_len-by-hidden_size tensor): The hidden states of the corresponding input sequence from the
         encoder, where seq_len is the length of the input sequence.
 
         Returns:
-            tuple of one (1, vocab_size) tensor and two (1, 1, hidden_size) tensors: The predicted outputs
-            and (hn, cn) from the RNN (LSTM) layer.
+            tuple of one length-vocab_size tensor and two (1, 1, hidden_size) tensors: The predictions, hn, and cn from this time step.
         """
-        target_token = self.embedding(target_token)    # 1-by-1-by-embedding_dim
-        out, (hn, cn) = self.rnn(target_token, (h0, c0))    # out is 1-by-1-by-hidden_size, hn and cn are both 1-by-1-by-hidden_size
-
-        input_seq_len = encoder_hidden_states[0].shape[0]    # input sequence's length
+        prev_output = self.embedding(prev_output)    # 1-by-1-by-embedding_dim
+        out, (hn, cn) = self.rnn(prev_output, (prev_hn, prev_cn))    # out is 1-by-1-by-hidden_size, hn and cn are both 1-by-1-by-hidden_size
 
         # Compute alignment scores then pass through softmax function
-        scores = torch.zeros((input_seq_len)).to(device)    # initialize with all zero's
-        for i in range(input_seq_len):
-            # Take dot product between each encoder's hidden states and this decoder's ouputted hidden state
-            scores[i] = torch.dot(out[0][0], encoder_hidden_states[0][i])
+        # Take dot product between this decoder's ouputted hidden state and each hidden state of the input sequence from the encoder
+        scores = torch.sum(encoder_hidden_states * out[0], dim=1)    # 1D tensor; length = input sequence's length
         scores = F.softmax(scores, dim=0)    # scores now lie in the range [0,1] and sum to 1
 
-        # Weigh the encoder's hidden states by the alignment scores then sum to get the context vector
-        context_vector = torch.zeros((1, self.hidden_size)).to(device)    # 1-by-hidden_size
-        for j in range(input_seq_len):
-            context_vector[0] = context_vector[0].add(torch.mul(encoder_hidden_states[0][j], scores[j].item()))
+        # Weigh the input sequence's hidden states by the alignment scores then sum to get the context vector
+        encoder_hidden_states_transposed = torch.transpose(encoder_hidden_states, 0, 1)
+        context_vector = torch.matmul(encoder_hidden_states_transposed, scores)    # 1D tensor; length = hidden_size
 
-        # Concatenate the decoder's ouputted hidden state with the context vector
-        concat = torch.cat((out[0], context_vector), dim=1)    # 1-by-hidden_size*2
-
-        # Pass through fc layer then softmax layer
-        concat = self.softmax(self.fc(concat))    # 1-by-vocab_size
+        # Concatenate the decoder's ouputted hidden state with the context vector, then pass thru fc and softmax layers
+        concat = torch.cat((out[0][0], context_vector), dim=0)    # 1D tensor; length = hidden_size*2
+        concat = self.softmax(self.fc(concat))    # 1D tensor; length = vocab_size
 
         return concat, hn, cn
+
+    def forward(self, encoder_hn, encoder_cn, encoder_hidden_states, device, cutoff=100):
+        """Forward pass through the decoder.
+
+        Args:
+            encoder_hn (1-by-1-by-hidden_size tensor): Tensor containing the final hidden state of the corresponding input sequence.
+            encoder_cn (1-by-1-by-hidden_size tensor): Tensor containing the final cell state of the corresponding input sequence.
+            encoder_hidden_states (seq_len-by-hidden_size tensor): The hidden states of the corresponding input sequence from the
+        encoder, where seq_len is the length of the input sequence.
+            cutoff (int): Maximum number of predicted tokens expected. Defaults to 100.
+
+        Returns:
+            tuple of one (cutoff, vocab_size) tensor and one length-cutoff tensor: The predicted outputs
+            and the indices that make up the translated sequence.
+        """
+        preds = []
+        indices = []
+        prev_output = torch.tensor([[2]])    # initial input, '<s>'
+        prev_hn = encoder_hn
+        prev_cn = encoder_cn
+        for i in range(cutoff):
+            pred, hn, cn = self.forward_step(prev_output, prev_hn, prev_cn, encoder_hidden_states, device)
+            preds.append(pred)
+            top_pred_val, top_pred_idx = pred.topk(1)    # most-likely prediction and its corresponding index
+            indices.append(top_pred_idx.item())
+            prev_output = torch.tensor([[top_pred_idx.item()]])
+            prev_hn = hn
+            prev_cn = cn
+            if top_pred_idx.item() == 3: break    # predicted '</s>', so stop
+        results = torch.stack(preds)
+        return results, torch.tensor(indices)    # cutoff-by-vocab_size, length-cutoff
