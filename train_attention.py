@@ -103,9 +103,9 @@ if __name__ == "__main__":
             if i == 2: break
 
     plt.figure(1)
-    plt.title('Loss vs. Batch')
+    plt.title('Average Loss per Batch')
     plt.xlabel(f'Batch (1 batch = {batch_size} translations)')
-    plt.ylabel('Loss')
+    plt.ylabel('Average Loss')
     plt.plot(training_losses)
     plt.show()
 
