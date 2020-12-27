@@ -11,17 +11,25 @@ from util import EnVietDataset, collate_fn
 from attention_network import AttnEncoderRNN, AttnDecoderRNN
 
 def train(input_batch, target_batch, e_lens, v_lens, encoder, decoder, encoder_optim, decoder_optim, loss_fn, device):
-    batch_loss = 0.0
-    all_encoder_hidden_states, all_encoder_hn, all_encoder_cn = encoder(input_batch, e_lens)
+    batch_loss_total = 0.0
 
-    for idx, target_seq in enumerate(target_batch):
-        encoder_hn = torch.tensor([[all_encoder_hn[0][idx].tolist()]])    # 1-by-1-by-hidden_size
-        encoder_cn = torch.tensor([[all_encoder_cn[0][idx].tolist()]])    # 1-by-1-by-hidden_size
-        encoder_hidden_states = torch.tensor(all_encoder_hidden_states[idx].tolist())    # seq_len-by-hidden_size
-        preds, _ = decoder(encoder_hn, encoder_cn, encoder_hidden_states, device, cutoff=(v_lens[idx] - 1))
+    all_encoder_hidden_states, all_encoder_hn, all_encoder_cn = encoder(input_batch, e_lens)    # (N, seq_len, hidden_size), (1, N, hidden_size), (1, N, hidden_size)
 
-        loss = loss_fn(preds, torch.tensor(target_seq.tolist()[1 : preds.shape[0] + 1]))
-        batch_loss += loss.item()
+    decoder_inputs = target_batch[:,0:1]    # N-by-1; the <s> from each sequence
+    prev_hn = all_encoder_hn
+    prev_cn = all_encoder_cn
+
+    max_seq_len = max(v_lens)
+    for time_step in range(max_seq_len - 1):
+        outputs, hn, cn = decoder(decoder_inputs, prev_hn, prev_cn, all_encoder_hidden_states, device)
+
+        loss = loss_fn(outputs, target_batch[:,time_step+1])
+        batch_loss_total += loss.item()
+
+        top_pred_vals, indices = outputs.topk(1)    # N-by-1 and N-by-1
+        decoder_inputs = indices.detach()
+        prev_hn = hn
+        prev_cn = cn
 
         encoder_optim.zero_grad()
         decoder_optim.zero_grad()
@@ -29,14 +37,16 @@ def train(input_batch, target_batch, e_lens, v_lens, encoder, decoder, encoder_o
         encoder_optim.step()
         decoder_optim.step()
 
-    return batch_loss / input_batch.shape[0]
+    return batch_loss_total
 
+"""
 def evaluate(input_seq, encoder, decoder, device):
     all_encoder_hidden_states, encoder_hn, encoder_cn = encoder(input_seq, [input_seq.shape[1]])
     encoder_hidden_states = torch.tensor(all_encoder_hidden_states[0].tolist())    # seq_len-by-hidden_size
     _, predicted_indices = decoder(encoder_hn, encoder_cn, encoder_hidden_states, device)
 
     return predicted_indices
+"""
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -80,6 +90,9 @@ if __name__ == "__main__":
     encoder = AttnEncoderRNN(len(train_dataset.en_vocab), embedding_dim, hidden_size)
     decoder = AttnDecoderRNN(len(train_dataset.viet_vocab), embedding_dim, hidden_size)
 
+    encoder.to(device)
+    decoder.to(device)
+
     encoder_optim = optim.SGD(encoder.parameters(), lr=learning_rate, momentum=momentum)
     decoder_optim = optim.SGD(decoder.parameters(), lr=learning_rate, momentum=momentum)
 
@@ -95,23 +108,23 @@ if __name__ == "__main__":
         encoder.train()
         decoder.train()
         for i, data in enumerate(train_loader):
-            en, viet, e_lens, v_lens = data[0][0], data[0][1], data[1], data[2]
-            batch_loss = train(en, viet, e_lens, v_lens, encoder, decoder, encoder_optim, decoder_optim, loss_fn, device)
+            en, viet, e_lens, v_lens = data[0][0].to(device), data[0][1].to(device), data[1], data[2]
+            total_batch_loss = train(en, viet, e_lens, v_lens, encoder, decoder, encoder_optim, decoder_optim, loss_fn, device)
 
-            training_losses.append(batch_loss)
-            print(f'[Epoch {epoch + 1}, Batch {i + 1} ({timeSince(start)})]: {batch_loss}')
-            if i == 2: break
+            training_losses.append(total_batch_loss)
+            print(f'[Epoch {epoch + 1}, Batch {i + 1} ({(i + 1) * batch_size} translations)] ({timeSince(start)}): {total_batch_loss}')
 
     plt.figure(1)
-    plt.title('Average Loss per Batch')
+    plt.title('Loss per Batch')
     plt.xlabel(f'Batch (1 batch = {batch_size} translations)')
-    plt.ylabel('Average Loss')
+    plt.ylabel('Loss')
     plt.plot(training_losses)
     plt.show()
 
     torch.save(encoder.state_dict(), './attn_encoder.pth')
     torch.save(decoder.state_dict(), './attn_decoder.pth')
 
+    """
     encoder.eval()
     decoder.eval()
     while True:
@@ -126,3 +139,4 @@ if __name__ == "__main__":
             print()
         keep_playing = input('> Translate something else? (y/n): ')
         if keep_playing == 'n': break
+    """
