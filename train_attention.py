@@ -16,20 +16,21 @@ def train(input_batch, target_batch, e_lens, v_lens, encoder, decoder, encoder_o
     all_encoder_hidden_states, all_encoder_hn, all_encoder_cn = encoder(input_batch, e_lens)    # (N, seq_len, hidden_size), (1, N, hidden_size), (1, N, hidden_size)
 
     decoder_inputs = target_batch[:,0:1]    # N-by-1; the <s> from each sequence
-    prev_hn = all_encoder_hn
-    prev_cn = all_encoder_cn
+    encoder_hidden_states = torch.autograd.Variable(all_encoder_hidden_states, requires_grad=True)
+    prev_hn = torch.autograd.Variable(all_encoder_hn, requires_grad=True)
+    prev_cn = torch.autograd.Variable(all_encoder_cn, requires_grad=True)
 
     max_seq_len = max(v_lens)
     for time_step in range(max_seq_len - 1):
-        outputs, hn, cn = decoder(decoder_inputs, prev_hn, prev_cn, all_encoder_hidden_states, device)
+        outputs, hn, cn = decoder(decoder_inputs, prev_hn, prev_cn, encoder_hidden_states, device)
 
         loss = loss_fn(outputs, target_batch[:,time_step+1])
         batch_loss_total += loss.item()
 
         top_pred_vals, indices = outputs.topk(1)    # N-by-1 and N-by-1
         decoder_inputs = indices.detach()
-        prev_hn = hn
-        prev_cn = cn
+        prev_hn = torch.autograd.Variable(hn, requires_grad=True)
+        prev_cn = torch.autograd.Variable(cn, requires_grad=True)
 
         encoder_optim.zero_grad()
         decoder_optim.zero_grad()
@@ -39,14 +40,28 @@ def train(input_batch, target_batch, e_lens, v_lens, encoder, decoder, encoder_o
 
     return batch_loss_total
 
-"""
-def evaluate(input_seq, encoder, decoder, device):
-    all_encoder_hidden_states, encoder_hn, encoder_cn = encoder(input_seq, [input_seq.shape[1]])
-    encoder_hidden_states = torch.tensor(all_encoder_hidden_states[0].tolist())    # seq_len-by-hidden_size
-    _, predicted_indices = decoder(encoder_hn, encoder_cn, encoder_hidden_states, device)
+def evaluate(input_seq, input_seq_len, encoder, decoder):
+    encoder_hidden_states, encoder_hn, encoder_cn = encoder(input_seq, input_seq_len)
 
-    return predicted_indices
-"""
+    decoder_input = torch.tensor(2)
+    prev_hn = encoder_hn
+    prev_cn = encoder_cn
+
+    predicted_indices = []
+
+    # Model could potentially keep generating words on forever; so hacky stopping condition for now
+    stopping_cond = 500
+
+    for i in range(stopping_cond):
+        output, hn, cn = decoder(torch.tensor([[decoder_input.item()]]), prev_hn, prev_cn, encoder_hidden_states, device)
+        prev_hn = hn
+        prev_cn = cn
+        top_pred_val, top_pred_idx = output.topk(1)    # largest output and its corresponding index
+        decoder_input = torch.tensor(top_pred_idx.item())
+        predicted_indices.append(decoder_input.item())
+        if decoder_input.item() == 3: break    # predicted '</s>', so stop
+
+    return torch.tensor(predicted_indices)
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -68,7 +83,7 @@ if __name__ == "__main__":
     viet_path = './data/train.vi.txt'
     en_vocab_path = './data/vocab.en.txt'
     viet_vocab_path = './data/vocab.vi.txt'
-    batch_size = 100
+    batch_size = 1000
     train_dataset = EnVietDataset(en_path, viet_path, en_vocab_path, viet_vocab_path)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True)
 
@@ -124,19 +139,26 @@ if __name__ == "__main__":
     torch.save(encoder.state_dict(), './attn_encoder.pth')
     torch.save(decoder.state_dict(), './attn_decoder.pth')
 
-    """
-    encoder.eval()
-    decoder.eval()
+    test_enc = AttnEncoderRNN(len(train_dataset.en_vocab), embedding_dim, hidden_size)
+    test_enc.load_state_dict(torch.load('./attn_encoder.pth'))
+    test_dec = AttnDecoderRNN(len(train_dataset.viet_vocab), embedding_dim, hidden_size)
+    test_dec.load_state_dict(torch.load('./attn_decoder.pth'))
+
+    test_enc.eval()
+    test_dec.eval()
     while True:
         en_input = input('> English: ')
+        if en_input == '<STOP>': break
         en_input_tokens = en_input.strip().split(' ')
+        en_input_tokens.insert(0, '<s>')
+        en_input_tokens.append('</s>')
         en_input_indices = train_dataset.tokens_to_indices(en_input_tokens, lang='en')
-        test_en_input = en_input_indices.unsqueeze(0)
+        test_en_input = torch.zeros((1, len(en_input_tokens)))
+        test_en_input[0] = en_input_indices
         test_en_input = test_en_input.long()
+        test_en_input = test_en_input
         with torch.no_grad():
-            predicted_indices = evaluate(test_en_input, encoder, decoder, device)
+            predicted_indices = evaluate(test_en_input, [len(en_input_tokens)], test_enc, test_dec)
+            print(predicted_indices)
             print(f'> Vietnamese: {train_dataset.indices_to_tokens(predicted_indices, lang="viet")}')
             print()
-        keep_playing = input('> Translate something else? (y/n): ')
-        if keep_playing == 'n': break
-    """

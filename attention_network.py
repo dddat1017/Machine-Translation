@@ -61,16 +61,13 @@ class AttnDecoderRNN(nn.Module):
         embeddings = self.embedding(prev_outputs)    # N-by-1-by-embedding_dim
         out, (hn, cn) = self.rnn(embeddings, (prev_hn, prev_cn))    # out is N-by-1-by-hidden_size, hn and cn are both 1-by-N-by-hidden_size
 
-        alignment_scores = torch.sum(encoder_hidden_states * out, dim=2)    # N-by-input_seq_len
+        alignment_scores = torch.sum(encoder_hidden_states * out, dim=2, keepdim=True)    # N-by-input_seq_len-by-1
 
-        context_vectors = []
-        for seq_hidden_state, score in zip(encoder_hidden_states, alignment_scores):
-            sht = torch.tensor(torch.transpose(seq_hidden_state, 0, 1).tolist())    # hidden_size-by-input_seq_len
-            c_vec = torch.matmul(sht.to(device), torch.tensor(score.tolist()).to(device))    # length-hidden_size
-            context_vectors.append(c_vec)
-        context_vectors = torch.stack(context_vectors)    # N-by-hidden_size
+        context_vectors = torch.sum(encoder_hidden_states * alignment_scores, dim=1)    # N-by-hidden_size
 
-        concat = torch.cat((torch.tensor(torch.squeeze(out).tolist()).to(device), context_vectors), dim=1)    # N-by-hidden_size*2
+        # torch.sum(out, dim=1) is a neat way to squeeze the dimensions to N-by-hidden_size, since
+        # torch.squeeze(out) won't with a batch size N = 1.
+        concat = torch.cat((torch.sum(out, dim=1), context_vectors), dim=1)    # N-by-hidden_size*2
         concat = self.softmax(self.fc(concat))    # N-by-vocab_size
 
         return concat, hn, cn
