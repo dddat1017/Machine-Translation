@@ -11,36 +11,38 @@ from util import EnVietDataset, collate_fn
 from attention_network import AttnEncoderRNN, AttnDecoderRNN
 
 def train(input_batch, target_batch, e_lens, v_lens, encoder, decoder, encoder_optim, decoder_optim, loss_fn, device):
-    batch_loss_total = 0.0
-
     all_encoder_hidden_states, all_encoder_hn, all_encoder_cn = encoder(input_batch, e_lens)    # (N, seq_len, hidden_size), (1, N, hidden_size), (1, N, hidden_size)
 
     decoder_inputs = target_batch[:,0:1]    # N-by-1; the <s> from each sequence
-    encoder_hidden_states = torch.autograd.Variable(all_encoder_hidden_states, requires_grad=True)
-    prev_hn = torch.autograd.Variable(all_encoder_hn, requires_grad=True)
-    prev_cn = torch.autograd.Variable(all_encoder_cn, requires_grad=True)
+    prev_hn = all_encoder_hn
+    prev_cn = all_encoder_cn
+
+    preds = []
+    targets = []
 
     max_seq_len = max(v_lens)
     for time_step in range(max_seq_len - 1):
-        outputs, hn, cn = decoder(decoder_inputs, prev_hn, prev_cn, encoder_hidden_states, device)
+        outputs, hn, cn = decoder(decoder_inputs, prev_hn, prev_cn, all_encoder_hidden_states, device)
 
-        loss = loss_fn(outputs, target_batch[:,time_step+1])
-        batch_loss_total += loss.item()
+        preds.append(outputs)
+        targets.append(target_batch[:,time_step+1])
 
         top_pred_vals, indices = outputs.topk(1)    # N-by-1 and N-by-1
         decoder_inputs = indices.detach()
-        prev_hn = torch.autograd.Variable(hn, requires_grad=True)
-        prev_cn = torch.autograd.Variable(cn, requires_grad=True)
+        prev_hn = hn
+        prev_cn = cn
 
-        encoder_optim.zero_grad()
-        decoder_optim.zero_grad()
-        loss.backward()
-        encoder_optim.step()
-        decoder_optim.step()
+    loss = loss_fn(torch.cat(preds, dim=0), torch.cat(targets, dim=0))
 
-    return batch_loss_total
+    encoder_optim.zero_grad()
+    decoder_optim.zero_grad()
+    loss.backward()
+    encoder_optim.step()
+    decoder_optim.step()
 
-def evaluate(input_seq, input_seq_len, encoder, decoder):
+    return loss.item()
+
+def evaluate(input_seq, input_seq_len, encoder, decoder, cutoff=300):
     encoder_hidden_states, encoder_hn, encoder_cn = encoder(input_seq, input_seq_len)
 
     decoder_input = torch.tensor(2)
@@ -49,10 +51,8 @@ def evaluate(input_seq, input_seq_len, encoder, decoder):
 
     predicted_indices = []
 
-    # Model could potentially keep generating words on forever; so hacky stopping condition for now
-    stopping_cond = 500
-
-    for i in range(stopping_cond):
+    # Model could potentially keep generating words on forever; use a cutoff limit to restrict this
+    for i in range(cutoff):
         output, hn, cn = decoder(torch.tensor([[decoder_input.item()]]), prev_hn, prev_cn, encoder_hidden_states, device)
         prev_hn = hn
         prev_cn = cn
@@ -83,7 +83,8 @@ if __name__ == "__main__":
     viet_path = './data/train.vi.txt'
     en_vocab_path = './data/vocab.en.txt'
     viet_vocab_path = './data/vocab.vi.txt'
-    batch_size = 1000
+    total_train_set_size = 133300
+    batch_size = 100
     train_dataset = EnVietDataset(en_path, viet_path, en_vocab_path, viet_vocab_path)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True)
 
@@ -123,11 +124,18 @@ if __name__ == "__main__":
         encoder.train()
         decoder.train()
         for i, data in enumerate(train_loader):
+            # Training on Colab's GPU throws an ambiguous error probably involving the last batch not having batch_size since
+            # it's all the remaining sentence pairs (which is less than batch_size). So, don't train on the last batch.
+            if i == (total_train_set_size // batch_size): break
+
             en, viet, e_lens, v_lens = data[0][0].to(device), data[0][1].to(device), data[1], data[2]
             total_batch_loss = train(en, viet, e_lens, v_lens, encoder, decoder, encoder_optim, decoder_optim, loss_fn, device)
 
             training_losses.append(total_batch_loss)
-            print(f'[Epoch {epoch + 1}, Batch {i + 1} ({(i + 1) * batch_size} translations)] ({timeSince(start)}): {total_batch_loss}')
+
+            # Print every 20 mini-batches
+            if i % 20 == 19:
+                print(f'[Epoch {epoch + 1}, Batch {i + 1} ({(i + 1) * batch_size} translations)] ({timeSince(start)}): {total_batch_loss}')
 
     plt.figure(1)
     plt.title('Loss per Batch')
@@ -159,6 +167,5 @@ if __name__ == "__main__":
         test_en_input = test_en_input
         with torch.no_grad():
             predicted_indices = evaluate(test_en_input, [len(en_input_tokens)], test_enc, test_dec)
-            print(predicted_indices)
             print(f'> Vietnamese: {train_dataset.indices_to_tokens(predicted_indices, lang="viet")}')
             print()
