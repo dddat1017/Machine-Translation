@@ -8,6 +8,7 @@ TODO:
 - [] Training: Run for more epochs
 - [] Training: Implement K-fold CV
 - [] Training: Hyperparameter tuning
+- [] Testing: Implement model evaluation for user inputs and test data
 - [] Miscellaneous: More documentation + better organization
 
 ## Latest Results
