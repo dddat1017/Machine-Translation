@@ -1,5 +1,3 @@
 .venv/
 .vscode/
 __pycache__/
-viet_vocab.pkl
-en_vocab.pkl
